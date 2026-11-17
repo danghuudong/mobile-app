@@ -72,10 +72,14 @@ export function LoginPage() {
         Skip to sign in
       </a>
       <header className="login-header">
-        <a className="login-brand-link" href="/" aria-label="Lemoncare home">
+        <a
+          className="login-brand-link"
+          href={import.meta.env.BASE_URL}
+          aria-label="Lemoncare home"
+        >
           <Brand />
         </a>
-        <a className="login-back-link" href="/">
+        <a className="login-back-link" href={import.meta.env.BASE_URL}>
           <ArrowLeft size={16} aria-hidden="true" />
           Back to overview
         </a>
@@ -97,7 +101,7 @@ export function LoginPage() {
           <div className="login-photo-frame">
             <img
               className="login-photo"
-              src="/images/dr-sarah.jpg"
+              src={`${import.meta.env.BASE_URL}images/dr-sarah.jpg`}
               alt="A smiling doctor welcoming you to Lemoncare"
               width="480"
               height="440"

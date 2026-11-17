@@ -15,7 +15,6 @@ import {
   MapPin,
   MessageCircle,
   MoreHorizontal,
-  Plus,
   Search,
   ShieldCheck,
   Smile,
@@ -25,6 +24,8 @@ import {
   Sun,
   Video,
 } from "lucide-react";
+import { LoginPage } from "./features/auth/LoginPage";
+import { Brand } from "./shared/Brand";
 import "./App.css";
 
 const menu: {
@@ -103,16 +104,6 @@ const doctors = [
   },
 ];
 
-function Brand() {
-  return (
-    <div className="brand">
-      <span className="brand-mark">
-        <Plus size={22} strokeWidth={3} />
-      </span>
-      lemoncare<span className="brand-dot">.</span>
-    </div>
-  );
-}
 function SectionHeading({
   title,
   subtitle,
@@ -203,9 +194,18 @@ function Hero() {
         </span>
         <div className="hero-trust">
           <div className="avatar-stack">
-            <img src="/images/dr-james.jpg" alt="" />
-            <img src="/images/dr-emily.jpg" alt="" />
-            <img src="/images/dr-sarah.jpg" alt="" />
+            <img
+              src={`${import.meta.env.BASE_URL}images/dr-james.jpg`}
+              alt=""
+            />
+            <img
+              src={`${import.meta.env.BASE_URL}images/dr-emily.jpg`}
+              alt=""
+            />
+            <img
+              src={`${import.meta.env.BASE_URL}images/dr-sarah.jpg`}
+              alt=""
+            />
           </div>
           <div>
             <span className="trust-stars">★★★★★</span>
@@ -221,7 +221,7 @@ function Hero() {
         <Sparkles className="hero-spark" size={32} strokeWidth={1.3} />
         <div className="hero-photo">
           <img
-            src="/images/dr-sarah.jpg"
+            src={`${import.meta.env.BASE_URL}images/dr-sarah.jpg`}
             alt="A friendly doctor ready to welcome you"
           />
         </div>
@@ -260,7 +260,10 @@ function Appointment() {
         </div>
       </div>
       <div className="appointment-doctor">
-        <img src="/images/dr-sarah.jpg" alt="Dr. Sarah Mitchell" />
+        <img
+          src={`${import.meta.env.BASE_URL}images/dr-sarah.jpg`}
+          alt="Dr. Sarah Mitchell"
+        />
         <div>
           <h3>Dr. Sarah Mitchell</h3>
           <p>General Practitioner</p>
@@ -337,6 +340,13 @@ function HealthSnapshot() {
   );
 }
 function App() {
+  if (
+    window.location.pathname.replace(/\/+$/, "") ===
+    `${import.meta.env.BASE_URL}login`
+  ) {
+    return <LoginPage />;
+  }
+
   return (
     <div className="app-shell">
       <Sidebar />
@@ -359,12 +369,12 @@ function App() {
               <Bell size={20} />
               <i />
             </span>
-            <div className="profile-avatar">JL</div>
-            <div className="header-profile">
-              <strong>Jamie Lee</strong>
-              <span>Personal account</span>
-            </div>
-            <ChevronDown className="profile-chevron" size={14} />
+            <a
+              className="header-sign-in"
+              href={`${import.meta.env.BASE_URL}login/`}
+            >
+              Sign in <ArrowUpRight size={16} aria-hidden="true" />
+            </a>
           </div>
         </header>
         <main>
@@ -372,7 +382,7 @@ function App() {
             <div>
               <span className="greeting">MONDAY, NOVEMBER 16</span>
               <h2>
-                Good morning, Jamie <span className="wave">✺</span>
+                Welcome to Lemoncare <span className="wave">✺</span>
               </h2>
               <p>A little care goes a long way. How are you feeling today?</p>
             </div>
@@ -414,7 +424,7 @@ function App() {
                     <article className="doctor-card" key={doctor.name}>
                       <div className={`doctor-image ${doctor.color}`}>
                         <img
-                          src={`/images/${doctor.image}`}
+                          src={`${import.meta.env.BASE_URL}images/${doctor.image}`}
                           alt={doctor.name}
                           style={{ objectPosition: doctor.position }}
                         />

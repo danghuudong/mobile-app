@@ -15,7 +15,6 @@ import {
   MapPin,
   MessageCircle,
   MoreHorizontal,
-  Plus,
   Search,
   ShieldCheck,
   Smile,
@@ -25,6 +24,8 @@ import {
   Sun,
   Video,
 } from "lucide-react";
+import { LoginPage } from "./features/auth/LoginPage";
+import { Brand } from "./shared/Brand";
 import "./App.css";
 
 const menu: {
@@ -103,16 +104,6 @@ const doctors = [
   },
 ];
 
-function Brand() {
-  return (
-    <div className="brand">
-      <span className="brand-mark">
-        <Plus size={22} strokeWidth={3} />
-      </span>
-      lemoncare<span className="brand-dot">.</span>
-    </div>
-  );
-}
 function SectionHeading({
   title,
   subtitle,
@@ -337,6 +328,10 @@ function HealthSnapshot() {
   );
 }
 function App() {
+  if (window.location.pathname.replace(/\/+$/, "") === "/login") {
+    return <LoginPage />;
+  }
+
   return (
     <div className="app-shell">
       <Sidebar />
@@ -359,12 +354,9 @@ function App() {
               <Bell size={20} />
               <i />
             </span>
-            <div className="profile-avatar">JL</div>
-            <div className="header-profile">
-              <strong>Jamie Lee</strong>
-              <span>Personal account</span>
-            </div>
-            <ChevronDown className="profile-chevron" size={14} />
+            <a className="header-sign-in" href="/login">
+              Sign in <ArrowUpRight size={16} aria-hidden="true" />
+            </a>
           </div>
         </header>
         <main>
@@ -372,7 +364,7 @@ function App() {
             <div>
               <span className="greeting">MONDAY, NOVEMBER 16</span>
               <h2>
-                Good morning, Jamie <span className="wave">✺</span>
+                Welcome to Lemoncare <span className="wave">✺</span>
               </h2>
               <p>A little care goes a long way. How are you feeling today?</p>
             </div>

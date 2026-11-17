@@ -25,9 +25,9 @@ Actions are pinned to commit SHAs. Dependabot checks for action updates monthly.
 
 ### Activate GitHub Pages
 
-This repository is currently private. GitHub rejected Pages activation because the current account plan does not support Pages for this repository. The workflow keeps CI enabled and skips deployment until activation is possible. Repository visibility is unchanged.
+This repository uses public-repository GitHub Pages. Deployment is controlled by the repository variable `PAGES_ENABLED`; when it is absent or not `true`, CI still runs and deployment is skipped.
 
-1. Keep the repository private with a GitHub plan that supports private-repository Pages, or explicitly choose to make the repository public. Pages availability depends on the repository's plan and visibility: [GitHub documentation](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages).
+1. Use a public repository, or a GitHub plan that supports private-repository Pages. Pages availability depends on the repository's plan and visibility: [GitHub documentation](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages).
 2. Open **Settings → Pages → Build and deployment → Source → GitHub Actions**. The published frontend will be accessible to website visitors; this UI preview does not provide access control.
 3. Open **Settings → Secrets and variables → Actions → Variables** and create the repository variable `PAGES_ENABLED` with value `true`.
 4. Merge the workflow into `main`. If it is already merged, select **Actions → CI and GitHub Pages → Run workflow → main**. Successful deployment publishes at `https://danghuudong.github.io/mobile-app/`, with sign-in at `/mobile-app/login/`.

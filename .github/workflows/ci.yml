@@ -171,6 +171,9 @@ jobs:
     permissions:
       actions: read
       contents: read
+    concurrency:
+      group: cloudflare-pages-staging
+      queue: max
     environment:
       name: staging
       url: ${{ steps.verify.outputs.url }}
@@ -246,13 +249,28 @@ jobs:
             echo '::error::Configure the staging project and Cloudflare API token as described in README.md.'
             exit 1
           fi
-          curl --fail --silent --show-error --max-time 20 \
-            --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/pages/projects/$PROJECT" |
-            jq -e '.success and .result.production_branch == "main"' > /dev/null || {
-              echo '::error::The Cloudflare staging project must have main as its production branch.'
-              exit 1
-            }
+
+          cloudflare() {
+            curl --silent --show-error --max-time 20 \
+              --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$@"
+          }
+          projects="https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/pages/projects"
+          response="$RUNNER_TEMP/cloudflare-pages-project.json"
+          status=$(cloudflare --output "$response" --write-out '%{http_code}' "$projects/$PROJECT")
+          if [[ "$status" == 404 ]]; then
+            payload=$(jq -n --arg name "$PROJECT" '{name: $name, production_branch: "main"}')
+            cloudflare --fail --output "$response" --request POST \
+              --header 'Content-Type: application/json' --data "$payload" "$projects"
+          elif [[ "$status" != 200 ]]; then
+            echo "::error::Cloudflare Pages returned HTTP $status when looking up the staging project."
+            exit 1
+          fi
+
+          if ! jq -e --arg name "$PROJECT" '.success and .result.name == $name and
+              .result.production_branch == "main" and .result.source == null' "$response" > /dev/null; then
+            echo '::error::The Cloudflare staging project must use Direct Upload with production branch main.'
+            exit 1
+          fi
           printf '{"private":true}\n' > .pages-preview/package.json
 
       - name: Publish Cloudflare Pages preview

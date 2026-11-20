@@ -14,25 +14,29 @@ Clinical content and dashboard controls are illustrative. No booking, search, me
 
 ## GitHub Actions CI/CD
 
-The workflow is `.github/workflows/ci.yml`. It runs on pull requests into `main`, pushes to `main`, and manual runs from the Actions tab.
+**CI → Staging → Approval → Production → Monitoring and rollback**
 
-1. Set up Node.js 24 (from `.node-version`) and pnpm 12.10.1 (from `package.json`), with a dependency cache.
-2. Run `pnpm install --frozen-lockfile`, `pnpm run lint`, and `pnpm typecheck`.
-3. Build on the GitHub runner with a base path derived from the repository name (`/mobile-app/` for this repository), then create the static sign-in entry point.
-4. On `main` only, upload and deploy that same artifact if the repository variable `PAGES_ENABLED` is `true`. Pull requests never deploy. A failed check prevents deployment.
+1. **CI** runs on pull requests into `main`, pushes to `main`, and manual release runs. Lint, Typecheck, Security Scan (`pnpm audit --audit-level high`), and Test (required source files and assets) run in parallel. Quality Gate requires all four jobs to pass before building `dist/` for `/mobile-app/` and writing its release manifest. Build artifacts are kept for 7 days on PRs and 30 days for enabled releases on `main`.
+2. **Staging** deploys the candidate artifact to a Cloudflare Pages preview. It checks the release manifest, the homepage, the direct sign-in route, and static assets over HTTPS. The workflow summary links to the URL for that exact preview.
+3. **Approval** uses required reviewers on the `github-pages` environment. The reviewer opens the verified staging link, then selects **Review deployments → github-pages → Approve and deploy** in the workflow run. A new release must still be the head of `main` when the production job starts.
+4. **Production** publishes the same artifact to GitHub Pages. The production job refuses to publish if the reviewer rule is missing. Production runs are serialized and include verification of the deployed release against the staged manifest.
+5. **Monitoring** verifies the live manifest, routes and assets hourly in **Monitor GitHub Pages**. A failed check fails the workflow run. An operator can then restore a verified artifact using the rollback procedure below.
 
-Actions are pinned to commit SHAs. Dependabot checks for action updates monthly. Validation has read-only repository permissions; only the deployment job gets Pages and OIDC write permissions. No personal access token or deployment secret is needed. The `github-pages` environment records deployments; deploy jobs are serialized.
+Jobs using pnpm share `.github/actions/setup-project/action.yml` for Node.js, pnpm caching and frozen-lockfile installation. Actions are pinned to commit SHAs. PRs run CI only.
 
-### Activate GitHub Pages
+### Configure deployment
 
-This repository uses public-repository GitHub Pages. Deployment is controlled by the repository variable `PAGES_ENABLED`; when it is absent or not `true`, CI still runs and deployment is skipped.
+1. Keep **Settings → Pages → Build and deployment → Source** set to **GitHub Actions**. The production URL is `https://danghuudong.github.io/mobile-app/`.
+2. In **Settings → Environments → github-pages**, add at least one **Required reviewer**, allow only `main` to deploy, and turn off protection-rule bypass for administrators. Enable **Prevent self-review** if another reviewer is available. [GitHub environment settings](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments)
+3. Create a dedicated Cloudflare Pages **Direct Upload** project with production branch `main`. This workflow uploads to its `staging` preview branch. The preview URLs need to be reachable by GitHub Actions and the reviewers. [Cloudflare Direct Upload](https://developers.cloudflare.com/pages/get-started/direct-upload/)
+4. In GitHub, create the `staging` environment and allow only `main` to deploy. Add `CLOUDFLARE_API_TOKEN` as an environment secret scoped to the Cloudflare account with **Cloudflare Pages: Edit**. Add `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_PAGES_PROJECT` as repository Actions variables.
+5. Set the repository Actions variable `PAGES_ENABLED` to `true`. It enables releases and scheduled monitoring. To start the first release after merging the workflow, run **CI and GitHub Pages** on `main` with `rollback_run_id` blank. If a custom production URL is configured, set `PAGES_PRODUCTION_URL` to the full site base URL for scheduled checks.
 
-1. Use a public repository, or a GitHub plan that supports private-repository Pages. Pages availability depends on the repository's plan and visibility: [GitHub documentation](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages).
-2. Open **Settings → Pages → Build and deployment → Source → GitHub Actions**. The published frontend will be accessible to website visitors; this UI preview does not provide access control.
-3. Open **Settings → Secrets and variables → Actions → Variables** and create the repository variable `PAGES_ENABLED` with value `true`.
-4. Merge the workflow into `main`. If it is already merged, select **Actions → CI and GitHub Pages → Run workflow → main**. Successful deployment publishes at `https://danghuudong.github.io/mobile-app/`, with sign-in at `/mobile-app/login/`.
+### Roll back production
 
-For later releases, merge a passing PR into `main`; GitHub builds and deploys automatically. To redeploy an earlier version, revert the relevant change through a PR and merge it. Setting `PAGES_ENABLED` to `false` pauses future deployments; the already published website remains available.
+Open a successful production run in **Actions → CI and GitHub Pages** with an unexpired `verified-pages-*` artifact. Use the numeric run ID from its URL, run the same workflow on `main`, and enter that ID as `rollback_run_id`. The workflow stages the saved files, waits for approval, publishes them, and verifies production again. Verified production artifacts are retained for up to 90 days, subject to the repository retention limit.
+
+For releases published before this workflow, or after the verified artifact expires, revert the change through a PR and release the resulting commit on `main`. A rollback restores the deployed files. Revert the source change on `main` if it should stay out of future releases.
 
 Local verification follows repository instructions: run only `pnpm run lint` and `pnpm typecheck`. The application and production build are not run locally; the build runs in GitHub Actions.
 

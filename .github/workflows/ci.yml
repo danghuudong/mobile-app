@@ -6,51 +6,133 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      rollback_run_id:
+        description: Successful production run ID to restore (leave blank for a new release)
+        type: string
+        required: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.run_id || github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 defaults:
   run:
     shell: bash
 
+env:
+  SITE_BASE_PATH: /${{ github.event.repository.name }}/
+
 jobs:
-  build:
-    name: Lint, typecheck and build
+  lint:
+    name: Lint
+    if: ${{ !inputs.rollback_run_id }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      SITE_BASE_PATH: /${{ github.event.repository.name }}/
+    timeout-minutes: 10
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Set up pnpm from package.json
-        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-        with:
-          run_install: false
-
-      - name: Set up Node.js and dependency cache
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: .node-version
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-
-      - name: Install locked dependencies
-        run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup-project
 
       - name: Lint
         run: pnpm run lint
 
+  typecheck:
+    name: Typecheck
+    if: ${{ !inputs.rollback_run_id }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-project
+
       - name: Typecheck
         run: pnpm typecheck
+
+  security_scan:
+    name: Security Scan
+    if: ${{ !inputs.rollback_run_id }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-project
+
+      - name: Audit dependencies for high or critical vulnerabilities
+        run: pnpm audit --audit-level high
+
+  test:
+    name: Test
+    if: ${{ !inputs.rollback_run_id }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Smoke check application entry point and public assets
+        run: |
+          for file in index.html src/main.tsx public/favicon.svg \
+            public/images/dr-sarah.jpg public/images/dr-james.jpg public/images/dr-emily.jpg; do
+            if [[ ! -s "$file" ]]; then
+              echo "::error file=$file::Required app file is missing or empty"
+              exit 1
+            fi
+          done
+
+  quality_gate:
+    name: Quality Gate
+    needs: [lint, typecheck, security_scan, test]
+    if: ${{ !cancelled() && !inputs.rollback_run_id }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Require all four checks to pass
+        env:
+          LINT_RESULT: ${{ needs.lint.result }}
+          TYPECHECK_RESULT: ${{ needs.typecheck.result }}
+          SECURITY_RESULT: ${{ needs.security_scan.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+        run: |
+          printf 'Lint: %s\nTypecheck: %s\nSecurity Scan: %s\nTest: %s\n' \
+            "$LINT_RESULT" "$TYPECHECK_RESULT" "$SECURITY_RESULT" "$TEST_RESULT"
+          if [[ "$LINT_RESULT" != success || "$TYPECHECK_RESULT" != success || \
+                "$SECURITY_RESULT" != success || "$TEST_RESULT" != success ]]; then
+            echo '::error::Build requires all four checks to pass.'
+            exit 1
+          fi
+
+  build:
+    name: Build
+    needs: quality_gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      artifact_id: ${{ steps.artifact.outputs.artifact-id }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-project
 
       - name: Build for the repository Pages path
         run: pnpm run build --base "$SITE_BASE_PATH"
@@ -60,38 +142,227 @@ jobs:
           mkdir -p dist/login
           cp dist/index.html dist/login/index.html
           touch dist/.nojekyll
+          node .github/scripts/pages-release.mjs manifest dist "$GITHUB_SHA"
 
-      - name: Upload Pages artifact
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.PAGES_ENABLED == 'true'
-        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+      - name: Upload Artifact
+        id: artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          path: dist
-          retention-days: 1
+          name: lemoncare-dist-${{ github.run_attempt }}
+          path: dist/
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: ${{ github.ref == 'refs/heads/main' && vars.PAGES_ENABLED == 'true' && 30 || 7 }}
 
       - name: Explain inactive deployment
         if: github.ref == 'refs/heads/main' && vars.PAGES_ENABLED != 'true'
         run: |
-          echo 'CI passed. Deployment is disabled until GitHub Pages is available and the repository variable PAGES_ENABLED is set to true.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'CI passed. Set the repository variable PAGES_ENABLED to true to enable releases.' >> "$GITHUB_STEP_SUMMARY"
+
+  staging:
+    name: Deploy and verify staging
+    needs: build
+    if: >-
+      !cancelled() && (inputs.rollback_run_id ||
+      (needs.build.result == 'success' && github.ref == 'refs/heads/main' &&
+      github.event_name != 'pull_request' && vars.PAGES_ENABLED == 'true'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+    environment:
+      name: staging
+      url: ${{ steps.verify.outputs.url }}
+    outputs:
+      run_id: ${{ steps.release.outputs.run_id }}
+      artifact_id: ${{ steps.release.outputs.artifact_id }}
+    steps:
+      - name: Resolve candidate or verified rollback artifact
+        id: release
+        env:
+          BUILD_ARTIFACT_ID: ${{ needs.build.outputs.artifact_id }}
+          ROLLBACK_RUN_ID: ${{ inputs.rollback_run_id }}
+          RELEASES_ENABLED: ${{ vars.PAGES_ENABLED }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "$GITHUB_REF" != refs/heads/main || "$RELEASES_ENABLED" != true ]]; then
+            echo '::error::Releases require main and PAGES_ENABLED=true.'
+            exit 1
+          fi
+
+          run_id="$GITHUB_RUN_ID"
+          artifact_id="$BUILD_ARTIFACT_ID"
+          if [[ -n "$ROLLBACK_RUN_ID" ]]; then
+            if [[ ! "$ROLLBACK_RUN_ID" =~ ^[1-9][0-9]*$ ]]; then
+              echo '::error::Enter a numeric production workflow run ID.'
+              exit 1
+            fi
+
+            run_id="$ROLLBACK_RUN_ID"
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" |
+              jq -e '.path == ".github/workflows/ci.yml" and .head_branch == "main" and
+                .conclusion == "success" and (.event == "push" or .event == "workflow_dispatch")' > /dev/null || {
+                  echo '::error::Select a successful CI and GitHub Pages run on main.'
+                  exit 1
+                }
+            artifact_id=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?per_page=100" \
+              --jq '.artifacts[] | select(.expired == false and (.name | test("^verified-pages-[1-9][0-9]*$"))) | .id' |
+              sort -n | tail -1)
+          fi
+
+          if [[ -z "$artifact_id" ]]; then
+            echo '::error::No eligible release artifact is available for the selected run.'
+            exit 1
+          fi
+          printf 'run_id=%s\nartifact_id=%s\n' "$run_id" "$artifact_id" >> "$GITHUB_OUTPUT"
+
+      - name: Check out release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+
+      - name: Download release artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ steps.release.outputs.artifact_id }}
+          run-id: ${{ steps.release.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: .pages-preview/site${{ env.SITE_BASE_PATH }}
+
+      - name: Prepare Cloudflare Pages preview
+        env:
+          ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [[ ! "$ACCOUNT_ID" =~ ^[[:xdigit:]]{32}$ || ! "$PROJECT" =~ ^[a-z0-9][a-z0-9-]*$ || -z "$CLOUDFLARE_API_TOKEN" ]]; then
+            echo '::error::Configure the staging project and Cloudflare API token as described in README.md.'
+            exit 1
+          fi
+          curl --fail --silent --show-error --max-time 20 \
+            --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/pages/projects/$PROJECT" |
+            jq -e '.success and .result.production_branch == "main"' > /dev/null || {
+              echo '::error::The Cloudflare staging project must have main as its production branch.'
+              exit 1
+            }
+          printf '{"private":true}\n' > .pages-preview/package.json
+
+      - name: Publish Cloudflare Pages preview
+        id: preview
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3.15.0
+        with:
+          accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          packageManager: npm
+          workingDirectory: .pages-preview
+          wranglerVersion: "4.136.3"
+          command: pages deploy site --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT }} --branch=staging
+
+      - name: Verify staging and publish review link
+        id: verify
+        env:
+          PREVIEW_URL: ${{ steps.preview.outputs.deployment-url }}
+          PREVIEW_ENVIRONMENT: ${{ steps.preview.outputs.pages-environment }}
+        run: |
+          if [[ -z "$PREVIEW_URL" || "$PREVIEW_ENVIRONMENT" != preview ]]; then
+            echo '::error::Cloudflare did not return a preview deployment.'
+            exit 1
+          fi
+          url="${PREVIEW_URL%/}$SITE_BASE_PATH"
+          manifest=".pages-preview/site${SITE_BASE_PATH}release.json"
+          node .github/scripts/pages-release.mjs check "$url" "$manifest"
+          printf 'url=%s\n' "$url" >> "$GITHUB_OUTPUT"
+          commit=$(jq -er '.commit' "$manifest")
+          printf '### Staging verified\n\n[Review the staged build](%s) for commit `%s` before approving production.\n' \
+            "$url" "$commit" >> "$GITHUB_STEP_SUMMARY"
 
   deploy:
-    name: Deploy to GitHub Pages
-    needs: build
+    name: Approve, deploy and verify production
+    needs: staging
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.PAGES_ENABLED == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     permissions:
+      actions: read
+      contents: read
       pages: write
       id-token: write
     concurrency:
       group: github-pages
-      cancel-in-progress: false
+      queue: max
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Require production reviewers and a current release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ROLLBACK_RUN_ID: ${{ inputs.rollback_run_id }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/environments/github-pages" |
+            jq -e 'any(.protection_rules[]?; .type == "required_reviewers" and (.reviewers | length > 0))' > /dev/null || {
+              echo '::error::Enable Required reviewers for the github-pages environment before deploying.'
+              exit 1
+            }
+          if [[ -z "$ROLLBACK_RUN_ID" ]]; then
+            head_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
+            if [[ "$head_sha" != "$GITHUB_SHA" ]]; then
+              echo '::error::main advanced while this release was pending. Approve the release for the current head.'
+              exit 1
+            fi
+          fi
+
+      - name: Check out release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the staged release artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.staging.outputs.artifact_id }}
+          run-id: ${{ needs.staging.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: dist
+
       - name: Configure GitHub Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
 
-      - name: Deploy verified artifact
+      - name: Package the staged release for GitHub Pages
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          name: github-pages-${{ github.run_attempt }}
+          path: dist
+          include-hidden-files: true
+
+      - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+        with:
+          artifact_name: github-pages-${{ github.run_attempt }}
+
+      - name: Verify production release
+        env:
+          PRODUCTION_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          node .github/scripts/pages-release.mjs check "$PRODUCTION_URL" dist/release.json
+          commit=$(jq -er '.commit' dist/release.json)
+          printf '### Production verified\n\n[Live release](%s) for commit `%s`.\n' \
+            "$PRODUCTION_URL" "$commit" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save verified production artifact for rollback
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: verified-pages-${{ github.run_attempt }}
+          path: dist/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90

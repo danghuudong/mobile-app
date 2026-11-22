@@ -22,7 +22,10 @@ Clinical content and dashboard controls are illustrative. No booking, search, me
 4. **Production** uploads the staged artifact to the `main` branch of the `mobile-app-production` Cloudflare Pages project and verifies the live release against the staged manifest. Production runs are serialized.
 5. **Monitoring** checks the live manifest, routes, and assets hourly in **Monitor Cloudflare Pages**. A failed check fails the workflow run. An operator can restore a verified artifact using the rollback procedure below.
 
-Jobs using pnpm share `.github/actions/setup-project/action.yml` for Node.js, pnpm caching and frozen-lockfile installation. Actions are pinned to commit SHAs. PRs run CI only.
+Jobs using pnpm share `.github/actions/setup-project/action.yml` for Node.js, pnpm caching and frozen-lockfile installation. Actions are pinned to commit SHAs.
+
+Opening a pull request into `main` starts a CI run that ends after the build.
+Pushing another commit to the same pull request branch starts a new CI run for the updated code. GitHub Actions cancels an earlier run for that pull request if it is still in progress.
 
 ### Configure deployment
 

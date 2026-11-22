@@ -25,6 +25,7 @@ Clinical content and dashboard controls are illustrative. No booking, search, me
 Jobs using pnpm share `.github/actions/setup-project/action.yml` for Node.js, pnpm caching and frozen-lockfile installation. Actions are pinned to commit SHAs.
 
 Opening a pull request into `main` starts a CI run that ends after the build.
+Pushing another commit to the same pull request branch starts a new CI run for the updated code. GitHub Actions cancels an earlier run for that pull request if it is still in progress.
 
 ### Configure deployment
 

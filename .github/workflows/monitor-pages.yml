@@ -1,4 +1,4 @@
-name: Monitor GitHub Pages
+name: Monitor Cloudflare Pages
 
 on:
   schedule:
@@ -22,5 +22,5 @@ jobs:
 
       - name: Verify the production site
         env:
-          PRODUCTION_URL: ${{ vars.PAGES_PRODUCTION_URL || format('https://{0}.github.io/{1}/', github.repository_owner, github.event.repository.name) }}
+          PRODUCTION_URL: ${{ vars.CLOUDFLARE_PAGES_PRODUCTION_URL }}
         run: node .github/scripts/pages-release.mjs check "$PRODUCTION_URL"

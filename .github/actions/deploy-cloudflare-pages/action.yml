@@ -1,0 +1,84 @@
+name: Upload Cloudflare Pages release
+description: Validate the Direct Upload project and deploy the release artifact.
+inputs:
+  account-id:
+    description: Cloudflare account ID
+    required: true
+  api-token:
+    description: Cloudflare Pages API token
+    required: true
+  project:
+    description: Cloudflare Pages project name
+    required: true
+  branch:
+    description: Use staging for preview or main for production
+    required: true
+  production-url:
+    description: Canonical Pages URL required for production
+    required: false
+outputs:
+  deployment-url:
+    description: URL for the new deployment
+    value: ${{ steps.deploy.outputs.deployment-url }}
+  pages-environment:
+    description: Cloudflare environment for the deployment
+    value: ${{ steps.deploy.outputs.pages-environment }}
+runs:
+  using: composite
+  steps:
+    - name: Validate Direct Upload project
+      shell: bash
+      env:
+        ACCOUNT_ID: ${{ inputs.account-id }}
+        CLOUDFLARE_API_TOKEN: ${{ inputs.api-token }}
+        PROJECT: ${{ inputs.project }}
+        BRANCH: ${{ inputs.branch }}
+        PRODUCTION_URL: ${{ inputs.production-url }}
+      run: |
+        if [[ ! "$ACCOUNT_ID" =~ ^[[:xdigit:]]{32}$ || ! "$PROJECT" =~ ^[a-z0-9][a-z0-9-]*$ ||
+              -z "$CLOUDFLARE_API_TOKEN" || ( "$BRANCH" != staging && "$BRANCH" != main ) ]]; then
+          echo '::error::Configure the Pages project and Cloudflare API token as described in README.md.'
+          exit 1
+        fi
+
+        cloudflare() {
+          curl --silent --show-error --max-time 20 \
+            --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$@"
+        }
+        projects="https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/pages/projects"
+        response="$RUNNER_TEMP/cloudflare-pages-project.json"
+        status=$(cloudflare --output "$response" --write-out '%{http_code}' "$projects/$PROJECT")
+        if [[ "$status" == 404 && "$BRANCH" == staging ]]; then
+          payload=$(jq -n --arg name "$PROJECT" '{name: $name, production_branch: "main"}')
+          cloudflare --fail --output "$response" --request POST \
+            --header 'Content-Type: application/json' --data "$payload" "$projects"
+        elif [[ "$status" != 200 ]]; then
+          echo "::error::Cloudflare Pages returned HTTP $status when looking up $PROJECT."
+          exit 1
+        fi
+
+        if ! jq -e --arg name "$PROJECT" '.success and .result.name == $name and
+            .result.production_branch == "main" and .result.source == null' "$response" > /dev/null; then
+          echo '::error::The Pages project must use Direct Upload with production branch main.'
+          exit 1
+        fi
+        if [[ "$BRANCH" == main ]]; then
+          domain=$(jq -er '.result.subdomain' "$response")
+          if [[ "${PRODUCTION_URL%/}" != "https://$domain" ]]; then
+            echo '::error::CLOUDFLARE_PAGES_PRODUCTION_URL must match the production project Pages URL.'
+            exit 1
+          fi
+        fi
+
+        printf '{"private":true}\n' > .pages-deploy/package.json
+
+    - name: Deploy release files
+      id: deploy
+      uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3.15.0
+      with:
+        accountId: ${{ inputs.account-id }}
+        apiToken: ${{ inputs.api-token }}
+        packageManager: npm
+        workingDirectory: .pages-deploy
+        wranglerVersion: "4.136.3"
+        command: pages deploy site --project-name=${{ inputs.project }} --branch=${{ inputs.branch }}
